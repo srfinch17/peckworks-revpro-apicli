@@ -1,0 +1,17 @@
+# Build output
+bin/
+obj/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.rsuser
+
+# NuGet
+*.nupkg
+packages/
+project.lock.json
+
+# Settings with credentials (copy revprosettings.example.json to get started)
+**/Settings/revprosettings.json

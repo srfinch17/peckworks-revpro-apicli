@@ -1,0 +1,21 @@
+{
+    "RevproAPIOptionsList": [
+    {
+        "LogDir": "C:\\Scripts\\ScriptLogs\\",
+        "LogFile": "RevproScriptLogfile.txt",
+        "RevproAPIClientName": "Default",
+        "RevproAPIRole": "COMPANY FULL REPORTS",
+        "RevproAPIUser": "company_api",
+        "RevproAPIPwd": "password",
+        "RevproAuthURI": "https://company.revprooncloud.com/api/integration/v1/authenticate",
+        "RevproReportListURI": "https://company.revprooncloud.com/api/integration/v1/reports/list",
+        "RevproSignedUrlUri": "https://company.revprooncloud.com/api/integration/v2/reports/signedurl/",
+        "RevproTokenName": "Revpro-Token",
+        "RevproLayoutName": "Company Monthly Revenue Finance Data Services",
+        "RevproReportName": "Accounting Report",
+        "ReportDirectory": "C:\\Scripts\\Reports\\",
+        "ZipFileDownloadDirectory": "C:\\Scripts\\ZipReports\\",
+        "ReportFileNameExtension": "csv"
+    }
+]
+}
