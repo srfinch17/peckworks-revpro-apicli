@@ -15,3 +15,6 @@ project.lock.json
 
 # Settings with credentials (copy revprosettings.example.json to get started)
 **/Settings/revprosettings.json
+
+# Claude Code local settings
+.claude/settings.local.json

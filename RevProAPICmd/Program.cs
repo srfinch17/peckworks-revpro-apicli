@@ -84,7 +84,13 @@ namespace RevproAPICmd
 
             SettingsFileRootObject? optionsList = JsonConvert.DeserializeObject<SettingsFileRootObject>(jsonContent);
 
-            foreach (RevproAPI.RevproAPIOptions options in optionsList?.RevproAPIOptionsList)
+            if (optionsList?.RevproAPIOptionsList == null || optionsList.RevproAPIOptionsList.Count == 0)
+            {
+                Console.WriteLine("Error: No API options found in settings file.");
+                return;
+            }
+
+            foreach (RevproAPI.RevproAPIOptions options in optionsList.RevproAPIOptionsList)
             {
                 Console.WriteLine($"LogDir: {options.LogDir}");
                 RevproAPI revproAPI = new(options);
@@ -280,8 +286,8 @@ namespace RevproAPICmd
         public async Task<string> GetSignedURL(string token, int? id)
         {
             var baseAddress = new Uri(_revproSignedUrlUri);
-            var client = new HttpClient { BaseAddress = baseAddress };
-            APISignedURLResponse apiresult = new();
+            using var client = new HttpClient { BaseAddress = baseAddress };
+            APISignedURLResponse? apiresult = new();
 
             //add the token to the request headers
             if (!client.DefaultRequestHeaders.TryAddWithoutValidation("token", token))
@@ -314,7 +320,7 @@ namespace RevproAPICmd
                 if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
                 {
                     ErrorResponse404? errorResponse = JsonConvert.DeserializeObject<ErrorResponse404>(errorContent);
-                    string errorMessage = $"Error in GetSignedURL: {errorResponse.Error}. There was no report available at this location: {response.RequestMessage.RequestUri}";
+                    string errorMessage = $"Error in GetSignedURL: {errorResponse?.Error}. There was no report available at this location: {response.RequestMessage?.RequestUri}";
                     Console.WriteLine(errorMessage);
                     WriteLog(Path.Combine(_logDir, _logFile), errorMessage);
                     return "";
@@ -323,7 +329,7 @@ namespace RevproAPICmd
                 else if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
                 {
                     ErrorResponse400? errorResponse = JsonConvert.DeserializeObject<ErrorResponse400>(errorContent);
-                    string errorMessage = $"Error GetSignedURL: {errorResponse?.Message ?? string.Empty}, Status: {errorResponse.Status}";
+                    string errorMessage = $"Error GetSignedURL: {errorResponse?.Message ?? string.Empty}, Status: {errorResponse?.Status}";
                     Console.WriteLine(errorMessage);
                     WriteLog(Path.Combine(_logDir, _logFile), errorMessage);
                     return "";
@@ -339,7 +345,7 @@ namespace RevproAPICmd
                 }
             }
 
-            return apiresult.signed_url;
+            return apiresult?.signed_url ?? "";
 
         }
 
@@ -352,7 +358,7 @@ namespace RevproAPICmd
             string createddate = d.ToString("dd-MMM-yyyy");
             string createddateparameter = $"?createddate={createddate}";
             var baseAddress = new Uri(_revproReportListUri);
-            var client = new HttpClient { BaseAddress = baseAddress };
+            using var client = new HttpClient { BaseAddress = baseAddress };
 
             //add the token to the request headers
             if (!client.DefaultRequestHeaders.TryAddWithoutValidation("token", mytoken))
@@ -371,8 +377,8 @@ namespace RevproAPICmd
             {
                 string responseData = await response.Content.ReadAsStringAsync();
 
-                ApiReportListResponse apiResponse = JsonConvert.DeserializeObject<ApiReportListResponse>(responseData);
-                revproReports = apiResponse.Result;
+                ApiReportListResponse? apiResponse = JsonConvert.DeserializeObject<ApiReportListResponse>(responseData);
+                revproReports = apiResponse?.Result ?? new List<RevproReportMetadata>();
 
                 //filter the list down to the layout and report name in the options
                 foreach (RevproReportMetadata revproReportMetadata in revproReports)
@@ -404,7 +410,7 @@ namespace RevproAPICmd
                 if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
                 {
                     var errorResponse = JsonConvert.DeserializeObject<ErrorResponse404>(errorContent);
-                    string errorMessage = $"Error: {errorResponse.Error}";
+                    string errorMessage = $"Error: {errorResponse?.Error}";
                     Console.WriteLine(errorMessage);
                     WriteLog(Path.Combine(_logDir, _logFile), errorMessage);
                     throw new Exception(errorMessage);
@@ -412,7 +418,7 @@ namespace RevproAPICmd
                 else if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
                 {
                     var errorResponse = JsonConvert.DeserializeObject<ErrorResponse400>(errorContent);
-                    string errorMessage = $"Error: {errorResponse.Message}, Status: {errorResponse.Status}";
+                    string errorMessage = $"Error: {errorResponse?.Message}, Status: {errorResponse?.Status}";
                     Console.WriteLine(errorMessage);
                     WriteLog(Path.Combine(_logDir, _logFile), errorMessage);
                     throw new Exception(errorMessage);
@@ -437,8 +443,8 @@ namespace RevproAPICmd
                 //unzipToFileFullPath = Path.Combine(this._reportDirectory, Path.ChangeExtension(file_name, this._reportFileNameExtension));
                 unzipToFileFullPath = Path.Combine(this._reportDirectory);
 
-                Directory.CreateDirectory(Path.GetDirectoryName(zipFilePath));
-                Directory.CreateDirectory(Path.GetDirectoryName(unzipToFileFullPath));
+                Directory.CreateDirectory(Path.GetDirectoryName(zipFilePath) ?? Directory.GetCurrentDirectory());
+                Directory.CreateDirectory(Path.GetDirectoryName(unzipToFileFullPath) ?? Directory.GetCurrentDirectory());
 
                 await File.WriteAllBytesAsync(zipFilePath, bytes);
 
@@ -487,7 +493,7 @@ namespace RevproAPICmd
         //Reference: https://www.zuora.com/developer/api-references/revenue/operation/POST_Authenticate/
         public async Task<string> GetAuthToken()
         {
-            var client = new HttpClient();
+            using var client = new HttpClient();
             string revprotoken = "";
 
             var request = new HttpRequestMessage
@@ -586,18 +592,35 @@ namespace RevproAPICmd
 
             // Calculate rows per split, avoiding division by zero.
             int totalLines = File.ReadLines(csvfile).Count() - 1; // minus one to exclude header.
-            int linesPerSplit = totalLines / splitcount + (totalLines % splitcount == 0 ? 0 : 1);
+
+            if (totalLines <= 0)
+            {
+                Console.WriteLine("CSV file has only a header row (no data rows). Nothing to split.");
+                return;
+            }
+
+            // Don't create more split files than there are data rows
+            int effectiveSplitCount = Math.Min(splitcount, totalLines);
+            if (effectiveSplitCount < splitcount)
+            {
+                Console.WriteLine($"File has only {totalLines} data row(s). Creating {effectiveSplitCount} split file(s) instead of {splitcount}.");
+            }
+
+            int linesPerSplit = totalLines / effectiveSplitCount + (totalLines % effectiveSplitCount == 0 ? 0 : 1);
+
+            // Handle null from Path.GetDirectoryName (e.g., root-level paths)
+            string outputDirectory = Path.GetDirectoryName(csvfile) ?? Directory.GetCurrentDirectory();
 
             using (StreamReader sr = new StreamReader(csvfile))
             {
                 // Skip header
                 sr.ReadLine();
 
-                for (int splitNum = 1; splitNum <= splitcount; splitNum++)
+                for (int splitNum = 1; splitNum <= effectiveSplitCount; splitNum++)
                 {
                     // Define the split file name
                     string splitFile = Path.Combine(
-                        Path.GetDirectoryName(csvfile),
+                        outputDirectory,
                         $"{Path.GetFileNameWithoutExtension(csvfile)}_splitPart{splitNum.ToString("D2")}.csv");
 
                     using (StreamWriter sw = new StreamWriter(splitFile))
@@ -613,7 +636,7 @@ namespace RevproAPICmd
                             sw.WriteLine(sr.ReadLine());
                         }
                     }
-                    Console.WriteLine($"Created file {splitNum} of {splitcount} - {Path.GetFileNameWithoutExtension(csvfile)}_splitPart{splitNum.ToString("D2")}.csv");
+                    Console.WriteLine($"Created file {splitNum} of {effectiveSplitCount} - {Path.GetFileNameWithoutExtension(csvfile)}_splitPart{splitNum.ToString("D2")}.csv");
                 }
             }
 
@@ -625,66 +648,163 @@ namespace RevproAPICmd
         }
 
         //attempt to repair broken encoding in csv file
+        //Uses a streaming single-pass approach: reads bytes, detects invalid UTF-8 sequences,
+        //skips them, and writes everything else to the output file.
         public static void RepairCsvFile(string csvfile)
         {
-            List<long> errorCharacterLocations = new List<long>();
             Console.WriteLine($"Checking {Path.GetFileName(csvfile)} for UTF-8 encoding errors...");
 
-            // Check for UTF-8 validity and record the error positions.
-            using (FileStream fs = new FileStream(csvfile, FileMode.Open, FileAccess.Read))
+            string repairedFile = csvfile.Replace(".csv", "_repaired.csv");
+            int invalidByteCount = 0;
+
+            using (FileStream fsRead = new FileStream(csvfile, FileMode.Open, FileAccess.Read))
+            using (FileStream fsWrite = new FileStream(repairedFile, FileMode.Create, FileAccess.Write))
             {
                 byte[] buffer = new byte[4096];
                 int bytesRead;
-                UTF8Encoding utf8 = new UTF8Encoding(false, true);  // UTF-8 encoding with exception on invalid bytes
 
-                while ((bytesRead = fs.Read(buffer, 0, buffer.Length)) > 0)
+                // We may have a partial multi-byte sequence at the end of a buffer.
+                // Track leftover bytes from the previous read.
+                byte[] leftover = new byte[4];
+                int leftoverCount = 0;
+
+                while ((bytesRead = fsRead.Read(buffer, 0, buffer.Length)) > 0)
                 {
-                    int byteCount = bytesRead;
-                    while (byteCount > 0)
+                    // Combine leftover bytes from previous iteration with current buffer
+                    byte[] work;
+                    int workLen;
+                    if (leftoverCount > 0)
                     {
-                        try
-                        {
-                            // Attempt to decode the bytes in the buffer.
-                            utf8.GetChars(buffer, 0, byteCount);
-                            break;  // If successful, break out of the loop
-                        }
-                        catch (DecoderFallbackException ex)
-                        {
-                            // If unsuccessful, note the position and reduce the byte count by 1 and try again.
-                            errorCharacterLocations.Add(fs.Position - (bytesRead - byteCount + ex.Index));
-                            byteCount--;
-                            Console.WriteLine($"Encoding error found at postition {fs.Position - (bytesRead - byteCount + ex.Index)}");
-                        }
+                        workLen = leftoverCount + bytesRead;
+                        work = new byte[workLen];
+                        Array.Copy(leftover, 0, work, 0, leftoverCount);
+                        Array.Copy(buffer, 0, work, leftoverCount, bytesRead);
+                        leftoverCount = 0;
                     }
-                }
-            }
-
-            // If there are any invalid characters, create a new file without them.
-            if (errorCharacterLocations.Count > 0)
-            {
-                Console.WriteLine($"Found {errorCharacterLocations.Count} errors. Attempting to remove error producing characters...");
-                using (FileStream fsRead = new FileStream(csvfile, FileMode.Open, FileAccess.Read))
-                using (FileStream fsWrite = new FileStream(csvfile.Replace(".csv", "_repaired.csv"), FileMode.Create, FileAccess.Write))
-                {
-                    byte[] buffer = new byte[4096];
-                    int bytesRead;
-
-                    long currentPosition = 0;
-
-                    while ((bytesRead = fsRead.Read(buffer, 0, buffer.Length)) > 0)
+                    else
                     {
-                        for (int i = 0; i < bytesRead; i++)
+                        work = buffer;
+                        workLen = bytesRead;
+                    }
+
+                    int i = 0;
+                    while (i < workLen)
+                    {
+                        byte b = work[i];
+
+                        // Determine expected sequence length from the lead byte
+                        int seqLen;
+                        if (b <= 0x7F)
                         {
-                            if (!errorCharacterLocations.Contains(currentPosition))
+                            // 0xxxxxxx — ASCII (1 byte)
+                            seqLen = 1;
+                        }
+                        else if (b >= 0xC2 && b <= 0xDF)
+                        {
+                            // 110xxxxx — 2-byte sequence (C0/C1 are overlong, invalid)
+                            seqLen = 2;
+                        }
+                        else if (b >= 0xE0 && b <= 0xEF)
+                        {
+                            // 1110xxxx — 3-byte sequence
+                            seqLen = 3;
+                        }
+                        else if (b >= 0xF0 && b <= 0xF4)
+                        {
+                            // 11110xxx — 4-byte sequence (F5+ are invalid)
+                            seqLen = 4;
+                        }
+                        else
+                        {
+                            // Invalid lead byte (bare continuation byte 0x80-0xBF, or 0xC0-0xC1, or 0xF5+)
+                            invalidByteCount++;
+                            i++;
+                            continue;
+                        }
+
+                        // Check if we have enough bytes remaining in the work buffer
+                        if (i + seqLen > workLen)
+                        {
+                            // Possibly a valid sequence split across buffer boundaries.
+                            // Save remaining bytes as leftover for the next iteration.
+                            // But only if there IS a next iteration (more data to read).
+                            if (bytesRead == buffer.Length)
                             {
-                                fsWrite.WriteByte(buffer[i]);
+                                // More data likely coming — save as leftover
+                                leftoverCount = workLen - i;
+                                Array.Copy(work, i, leftover, 0, leftoverCount);
+                                break;
                             }
-                            currentPosition++;
+                            else
+                            {
+                                // End of file — this is a truncated sequence, skip the lead byte
+                                invalidByteCount++;
+                                i++;
+                                continue;
+                            }
+                        }
+
+                        // Validate continuation bytes (must be 10xxxxxx)
+                        bool valid = true;
+                        for (int j = 1; j < seqLen; j++)
+                        {
+                            if ((work[i + j] & 0xC0) != 0x80)
+                            {
+                                valid = false;
+                                break;
+                            }
+                        }
+
+                        // Additional checks for overlong encodings and invalid code points
+                        if (valid && seqLen == 3)
+                        {
+                            // E0 requires second byte >= A0 (prevents overlong 2-byte)
+                            if (b == 0xE0 && work[i + 1] < 0xA0) valid = false;
+                            // ED requires second byte <= 9F (prevents surrogates U+D800-U+DFFF)
+                            if (b == 0xED && work[i + 1] > 0x9F) valid = false;
+                        }
+                        else if (valid && seqLen == 4)
+                        {
+                            // F0 requires second byte >= 90 (prevents overlong 3-byte)
+                            if (b == 0xF0 && work[i + 1] < 0x90) valid = false;
+                            // F4 requires second byte <= 8F (prevents code points > U+10FFFF)
+                            if (b == 0xF4 && work[i + 1] > 0x8F) valid = false;
+                        }
+
+                        if (valid)
+                        {
+                            // Write valid sequence to output
+                            fsWrite.Write(work, i, seqLen);
+                            i += seqLen;
+                        }
+                        else
+                        {
+                            // Invalid sequence — skip the lead byte only.
+                            // Continuation bytes will be evaluated on their own in subsequent iterations.
+                            invalidByteCount++;
+                            i++;
                         }
                     }
                 }
+
+                // Flush any remaining leftover bytes that didn't form a complete sequence
+                if (leftoverCount > 0)
+                {
+                    // These are trailing bytes at end-of-file that couldn't complete a sequence
+                    invalidByteCount += leftoverCount;
+                    leftoverCount = 0;
+                }
             }
-            Console.WriteLine($"Created repaired file {csvfile.Replace(".csv", "_repaired.csv")}");
+
+            if (invalidByteCount > 0)
+            {
+                Console.WriteLine($"Found and removed {invalidByteCount} invalid bytes.");
+                Console.WriteLine($"Created repaired file {repairedFile}");
+            }
+            else
+            {
+                Console.WriteLine($"No encoding errors found. Repaired file written to {repairedFile}");
+            }
         }
 
     }
